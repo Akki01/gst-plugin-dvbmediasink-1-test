@@ -890,7 +890,7 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 #if GST_VERSION_MAJOR < 1
 	if (GST_BUFFER_TIMESTAMP(buffer) != GST_CLOCK_TIME_NONE)
 #else
-	if (GST_BUFFER_PTS_IS_VALID(buffer) || (self->codec_type == CT_DIVX311 && GST_BUFFER_DTS_IS_VALID(buffer)))
+	if (GST_BUFFER_PTS_IS_VALID(buffer) || ((self->codec_type == CT_DIVX311 || (self->codec_type == CT_MPEG4_PART2 && !GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DELTA_UNIT))) && GST_BUFFER_DTS_IS_VALID(buffer)))
 #endif
 	{
 		pes_header[7] = 0x80; /* pts */
@@ -1273,7 +1273,7 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 #if GST_VERSION_MAJOR < 1
 	if (GST_BUFFER_TIMESTAMP(buffer) != GST_CLOCK_TIME_NONE)
 #else
-	if (GST_BUFFER_PTS_IS_VALID(buffer) || (self->codec_type == CT_DIVX311 && GST_BUFFER_DTS_IS_VALID(buffer)))
+	if (GST_BUFFER_PTS_IS_VALID(buffer) || ((self->codec_type == CT_DIVX311 || (self->codec_type == CT_MPEG4_PART2 && !GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DELTA_UNIT))) && GST_BUFFER_DTS_IS_VALID(buffer)))
 #endif
 	{
 		self->pts_written = TRUE;
