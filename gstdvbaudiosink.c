@@ -315,7 +315,6 @@ static void gst_dvbaudiosink_init(GstDVBAudioSink *self)
 	self->timestamp = GST_CLOCK_TIME_NONE;
 
 	gst_base_sink_set_sync(GST_BASE_SINK(self), FALSE);
-	gst_base_sink_set_async_enabled(GST_BASE_SINK(self), TRUE);
 }
 
 static gint64 gst_dvbaudiosink_get_decoder_time(GstDVBAudioSink *self)
@@ -1498,6 +1497,8 @@ static GstStateChangeReturn gst_dvbaudiosink_change_state(GstElement *element, G
 		break;
 	case GST_STATE_CHANGE_READY_TO_PAUSED:
 		GST_DEBUG_OBJECT(self,"GST_STATE_CHANGE_READY_TO_PAUSED");
+		/* playsink overrides this setting in READY state */
+		gst_base_sink_set_async_enabled(GST_BASE_SINK(self), FALSE);
 		self->paused = TRUE;
 
 		if (self->fd >= 0)
