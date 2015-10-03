@@ -861,7 +861,13 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 #endif
 	/* remove dummy packed B-Frame */
 	if (self->codec_type == CT_MPEG4_PART2 && data_len < 10)
-		goto ok;
+	{
+		// gst_util_dump_mem(map.data, map.size);
+
+		/* check if we have start of VOP then check next 2 bits, if it's VOP (P) */
+		if (!memcmp(&data[0], "\x00\x00\x01\xb6", 4) && ((data[4] & 0xC0) >> 6) == 1)
+			goto ok;
+	}
 
 	pes_header[0] = 0;
 	pes_header[1] = 0;
