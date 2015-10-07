@@ -369,6 +369,11 @@ static void gst_dvbvideosink_init(GstDVBVideoSink *self)
 	self->saved_fallback_framerate[0] = 0;
 	self->rate = 1.0;
 
+	self->fixed_pts_timestamps = FALSE;
+	self->b_frames_count = 0;
+	self->was_first_ip_frame = FALSE;
+	self->second_ip_frame = NULL;
+
 	gst_base_sink_set_sync(GST_BASE_SINK(self), FALSE);
 	gst_base_sink_set_async_enabled(GST_BASE_SINK(self), TRUE);
 }
@@ -786,6 +791,174 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 #ifdef PACK_UNPACKED_XVID_DIVX5_BITSTREAM
 	gboolean commit_prev_frame_data = FALSE, cache_prev_frame = FALSE;
 #endif
+	if (self->codec_type == CT_MPEG4_PART2 && !self->fixed_pts_timestamps)
+	{
+            gchar dts_str[64], pts_str[64], dur_str[64];
+
+            if (GST_BUFFER_DTS (buffer) != GST_CLOCK_TIME_NONE) {
+              g_snprintf (dts_str, sizeof (dts_str), "%" GST_TIME_FORMAT,
+                  GST_TIME_ARGS (GST_BUFFER_DTS (buffer)));
+            } else {
+              g_strlcpy (dts_str, "none", sizeof (dts_str));
+            }
+
+            if (GST_BUFFER_PTS (buffer) != GST_CLOCK_TIME_NONE) {
+              g_snprintf (pts_str, sizeof (pts_str), "%" GST_TIME_FORMAT,
+                  GST_TIME_ARGS (GST_BUFFER_PTS (buffer)));
+            } else {
+              g_strlcpy (pts_str, "none", sizeof (pts_str));
+            }
+		unsigned int pos = 0;
+		gboolean iframe = FALSE;
+		while (pos < data_len)
+		{
+			if (memcmp(&data[pos], "\x00\x00\x01\xb6", 4))
+			{
+				pos++;
+				continue;
+			}
+			pos += 4;
+			switch ((data[pos] & 0xC0) >> 6)
+			{
+				case 0: // I-Frame
+					//GST_DEBUG_OBJECT(self, "I-Frame pts: %s , dts: %s", pts_str, dts_str);
+					iframe = TRUE;
+				case 1: // P-Frame
+					//GST_DEBUG_OBJECT(self, "P-Frame pts: %s , dts: %s", pts_str, dts_str);
+					if (!self->was_first_ip_frame)
+					{
+						self->was_first_ip_frame = TRUE;
+						GST_LOG_OBJECT(self, "Mark first (IP)-Frame");
+						GST_BUFFER_PTS(buffer) = GST_BUFFER_DTS(buffer) + GST_BUFFER_DURATION(buffer);
+					}
+					else if (!self->second_ip_frame)
+					{
+						self->second_ip_frame = buffer;
+						gst_buffer_ref(buffer);
+						GST_LOG_OBJECT(self, "Store second (IP)-Frame (1)");
+						return GST_FLOW_OK;
+					}
+					else
+					{
+						GST_LOG_OBJECT(self, "B-Frames count in between (IP)-Frames = %d", self->b_frames_count);
+						if (!self->b_frames_count)
+						{
+							GST_BUFFER_PTS(self->second_ip_frame) = (GST_BUFFER_DTS(self->second_ip_frame) + GST_BUFFER_DURATION(self->second_ip_frame));
+							self->fixed_pts_timestamps = TRUE;
+							// render P/I
+							gst_dvbvideosink_render(sink, self->second_ip_frame);
+							gst_buffer_unref(self->second_ip_frame);
+							self->second_ip_frame = buffer;
+							gst_buffer_ref(buffer);
+							GST_LOG_OBJECT(self, "Store second (IP)-Frame (3)");
+							self->fixed_pts_timestamps = FALSE;
+							return GST_FLOW_OK;
+						}
+						else
+						{
+							GST_BUFFER_PTS(self->second_ip_frame) = (GST_BUFFER_DTS(self->b_frames[self->b_frames_count-1]) + GST_BUFFER_DURATION(self->second_ip_frame));
+							self->fixed_pts_timestamps = TRUE;
+							gst_dvbvideosink_render(sink, self->second_ip_frame);
+							gst_buffer_unref(self->second_ip_frame);
+							self->second_ip_frame = NULL;
+
+							gint i;
+							for (i=0;i<self->b_frames_count; i++)
+							{
+								gst_dvbvideosink_render(sink, self->b_frames[i]);
+								gst_buffer_unref(self->b_frames[i]);
+							}
+							self->b_frames_count = 0;
+							self->fixed_pts_timestamps = FALSE;
+							self->second_ip_frame = buffer;
+							gst_buffer_ref(buffer);
+							GST_LOG_OBJECT(self, "Store second (IP)-Frame (2)");
+							return GST_FLOW_OK;
+						}
+
+					}
+					break;
+				case 3: // S-Frame
+					//GST_DEBUG_OBJECT(self, "S-Frame pts: %s , dts: %s", pts_str, dts_str);
+					break;
+				case 2: // B-Frame
+					//GST_DEBUG_OBJECT(self, "B-Frame pts: %s , dts: %s", pts_str, dts_str);
+					if (!self->second_ip_frame)
+					{
+						GST_ERROR_OBJECT(self, "cannot predict B-Frame without surrounding I/P-Frames!");
+						return GST_FLOW_ERROR;
+					}
+					if (GST_BUFFER_PTS (buffer) != GST_CLOCK_TIME_NONE)
+					{
+						GST_LOG_OBJECT(self, "We have B frames with PTS timestamps! setting passthrough mode");
+						self->fixed_pts_timestamps = TRUE;
+						gst_dvbvideosink_render(sink, self->second_ip_frame);
+						gst_buffer_unref(self->second_ip_frame);
+						self->second_ip_frame = NULL;
+					}
+					else
+					{
+						GST_LOG_OBJECT(self, "Store B-Frame %d", self->b_frames_count);
+						GST_BUFFER_PTS (buffer) = GST_BUFFER_DTS(buffer);
+						self->b_frames[self->b_frames_count++] = buffer;
+						gst_buffer_ref(buffer);
+						return GST_FLOW_OK;
+					}
+					break;
+				case 4: // N-Frame
+				default:
+					g_warning("unhandled divx5/xvid frame type %d\n", (data[pos] & 0xC0) >> 6);
+					break;
+			}
+		}
+	}if (self->codec_type == CT_MPEG4_PART2 && 0)
+	{
+            gchar dts_str[64], pts_str[64], dur_str[64];
+
+            if (GST_BUFFER_DTS (buffer) != GST_CLOCK_TIME_NONE) {
+              g_snprintf (dts_str, sizeof (dts_str), "%" GST_TIME_FORMAT,
+                  GST_TIME_ARGS (GST_BUFFER_DTS (buffer)));
+            } else {
+              g_strlcpy (dts_str, "none", sizeof (dts_str));
+            }
+
+            if (GST_BUFFER_PTS (buffer) != GST_CLOCK_TIME_NONE) {
+              g_snprintf (pts_str, sizeof (pts_str), "%" GST_TIME_FORMAT,
+                  GST_TIME_ARGS (GST_BUFFER_PTS (buffer)));
+            } else {
+              g_strlcpy (pts_str, "none", sizeof (pts_str));
+            }
+		unsigned int pos = 0;
+		gboolean iframe = FALSE;
+		while (pos < data_len)
+		{
+			if (memcmp(&data[pos], "\x00\x00\x01\xb6", 4))
+			{
+				pos++;
+				continue;
+			}
+			pos += 4;
+			switch ((data[pos] & 0xC0) >> 6)
+			{
+				case 0: // I-Frame
+					GST_DEBUG_OBJECT(self, "I-Frame pts: %s , dts: %s", pts_str, dts_str);
+					break;
+				case 1: // P-Frame
+					GST_DEBUG_OBJECT(self, "P-Frame pts: %s , dts: %s", pts_str, dts_str);
+					break;
+				case 3: // S-Frame
+					GST_DEBUG_OBJECT(self, "S-Frame pts: %s , dts: %s", pts_str, dts_str);
+					break;
+				case 2: // B-Frame
+					GST_DEBUG_OBJECT(self, "B-Frame pts: %s , dts: %s", pts_str, dts_str);
+					break;
+				case 4: // N-Frame
+				default:
+					g_warning("unhandled divx5/xvid frame type %d\n", (data[pos] & 0xC0) >> 6);
+					break;
+			}
+		}
+	}
 
 #ifdef PACK_UNPACKED_XVID_DIVX5_BITSTREAM
 	if (self->must_pack_bitstream)

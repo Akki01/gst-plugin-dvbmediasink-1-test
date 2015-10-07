@@ -105,6 +105,12 @@ struct _GstDVBVideoSink
 	gboolean must_pack_bitstream;
 	GstBuffer *prev_frame;
 #endif
+	gint b_frames_count;
+	gboolean was_first_ip_frame;
+	gboolean fixed_pts_timestamps;
+	GstBuffer *b_frames[5];
+	GstBuffer *second_ip_frame;
+
 
 	char saved_fallback_framerate[16];
 
