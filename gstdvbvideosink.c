@@ -76,11 +76,16 @@
 #include <gst/gst.h>
 #include <gst/base/gstbasesink.h>
 
-#define PACK_UNPACKED_XVID_DIVX5_BITSTREAM
+#undef PACK_UNPACKED_XVID_DIVX5_BITSTREAM
 
 #include "common.h"
 #include "gstdvbvideosink.h"
 #include "gstdvbsink-marshal.h"
+
+int my_ioctl(int d, unsigned long request, ...)
+{
+	return 0;
+}
 
 #ifndef VIDEO_SET_CODEC_DATA
 typedef struct video_codec_data
@@ -404,7 +409,7 @@ static gint64 gst_dvbvideosink_get_decoder_time(GstDVBVideoSink *self)
 	gint64 cur = 0;
 	if (self->fd < 0 || !self->playing || !self->pts_written) return GST_CLOCK_TIME_NONE;
 
-	ioctl(self->fd, VIDEO_GET_PTS, &cur);
+	my_ioctl(self->fd, VIDEO_GET_PTS, &cur);
 	if (cur)
 	{
 		self->lastpts = cur;
@@ -450,7 +455,7 @@ static gboolean gst_dvbvideosink_event(GstBaseSink *sink, GstEvent *event)
 		if(self->paused) ret = GST_BASE_SINK_CLASS(parent_class)->event(sink, event);
 		break;
 	case GST_EVENT_FLUSH_STOP:
-		if (self->fd >= 0) ioctl(self->fd, VIDEO_CLEAR_BUFFER);
+		if (self->fd >= 0) my_ioctl(self->fd, VIDEO_CLEAR_BUFFER);
 		GST_OBJECT_LOCK(self);
 		self->must_send_header = TRUE;
 		while (self->queue)
@@ -549,9 +554,9 @@ static gboolean gst_dvbvideosink_event(GstBaseSink *sink, GstEvent *event)
 				{
 					repeat = 1.0 / rate;
 				}
-				ioctl(self->fd, VIDEO_SLOWMOTION, repeat);
-				ioctl(self->fd, VIDEO_FAST_FORWARD, skip);
-				ioctl(self->fd, VIDEO_CONTINUE);
+				my_ioctl(self->fd, VIDEO_SLOWMOTION, repeat);
+				my_ioctl(self->fd, VIDEO_FAST_FORWARD, skip);
+				my_ioctl(self->fd, VIDEO_CONTINUE);
 				self->rate = rate;
 			}
 		}
@@ -630,9 +635,9 @@ static int video_write(GstBaseSink *sink, GstDVBVideoSink *self, GstBuffer *buff
 			GstStructure *s;
 			GstMessage *msg;
 			struct video_event evt;
-			if (ioctl(self->fd, VIDEO_GET_EVENT, &evt) < 0)
+			if (my_ioctl(self->fd, VIDEO_GET_EVENT, &evt) < 0)
 			{
-				g_warning("failed to ioctl VIDEO_GET_EVENT!");
+				g_warning("failed to my_ioctl VIDEO_GET_EVENT!");
 			}
 			else
 			{
@@ -1662,10 +1667,10 @@ static gboolean gst_dvbvideosink_set_caps(GstBaseSink *basesink, GstCaps *caps)
 		}
 		if (self->playing)
 		{
-			if (self->fd >= 0) ioctl(self->fd, VIDEO_STOP, 0);
+			if (self->fd >= 0) my_ioctl(self->fd, VIDEO_STOP, 0);
 			self->playing = FALSE;
 		}
-		if (self->fd < 0 || ioctl(self->fd, VIDEO_SET_STREAMTYPE, self->stream_type) < 0)
+		if (self->fd < 0 || my_ioctl(self->fd, VIDEO_SET_STREAMTYPE, self->stream_type) < 0)
 		{
 			GST_ELEMENT_ERROR(self, STREAM, CODEC_NOT_FOUND, (NULL), ("hardware decoder can't handle streamtype %i", self->stream_type));
 		}
@@ -1694,7 +1699,7 @@ static gboolean gst_dvbvideosink_set_caps(GstBaseSink *basesink, GstCaps *caps)
 					memset(data, 0, videocodecdata.length);
 					data += 8;
 					memcpy(data, codec_data_pointer, codec_size);
-					ioctl(self->fd, VIDEO_SET_CODEC_DATA, &videocodecdata);
+					my_ioctl(self->fd, VIDEO_SET_CODEC_DATA, &videocodecdata);
 					g_free(videocodecdata.data);
 #if GST_VERSION_MAJOR >= 1
 					gst_buffer_unmap(gst_value_get_buffer(codec_data), &codecdatamap);
@@ -1734,14 +1739,14 @@ static gboolean gst_dvbvideosink_set_caps(GstBaseSink *basesink, GstCaps *caps)
 					*(data++) = (height >> 8) & 0xff;
 					*(data++) = height & 0xff;
 					if (codec_data && codec_size) memcpy(data, codec_data_pointer, codec_size);
-					ioctl(self->fd, VIDEO_SET_CODEC_DATA, &videocodecdata);
+					my_ioctl(self->fd, VIDEO_SET_CODEC_DATA, &videocodecdata);
 					g_free(videocodecdata.data);
 #if GST_VERSION_MAJOR >= 1
 					gst_buffer_unmap(gst_value_get_buffer(codec_data), &codecdatamap);
 #endif
 				}
 			}
-			ioctl(self->fd, VIDEO_PLAY);
+			my_ioctl(self->fd, VIDEO_PLAY);
 		}
 		self->playing = TRUE;
 	}
@@ -1779,7 +1784,7 @@ static gboolean gst_dvbvideosink_start(GstBaseSink *basesink)
 		f = NULL;
 	}
 
-	self->fd = open("/dev/dvb/adapter0/video0", O_RDWR | O_NONBLOCK);
+	self->fd = open("/tmp/dump.pes", O_CREAT | O_WRONLY | O_TRUNC, 0777);
 
 	self->pts_written = FALSE;
 	self->lastpts = 0;
@@ -1802,16 +1807,16 @@ static gboolean gst_dvbvideosink_stop(GstBaseSink *basesink)
 	{
 		if (self->playing)
 		{
-			ioctl(self->fd, VIDEO_STOP);
+			my_ioctl(self->fd, VIDEO_STOP);
 			self->playing = FALSE;
 		}
 		if (self->rate != 1.0)
 		{
-			ioctl(self->fd, VIDEO_SLOWMOTION, 0);
-			ioctl(self->fd, VIDEO_FAST_FORWARD, 0);
+			my_ioctl(self->fd, VIDEO_SLOWMOTION, 0);
+			my_ioctl(self->fd, VIDEO_FAST_FORWARD, 0);
 			self->rate = 1.0;
 		}
-		ioctl(self->fd, VIDEO_SELECT_SOURCE, VIDEO_SOURCE_DEMUX);
+		my_ioctl(self->fd, VIDEO_SELECT_SOURCE, VIDEO_SOURCE_DEMUX);
 		close(self->fd);
 		self->fd = -1;
 	}
@@ -1878,13 +1883,13 @@ static GstStateChangeReturn gst_dvbvideosink_change_state(GstElement *element, G
 		self->paused = TRUE;
 		if (self->fd >= 0)
 		{
-			ioctl(self->fd, VIDEO_SELECT_SOURCE, VIDEO_SOURCE_MEMORY);
-			ioctl(self->fd, VIDEO_FREEZE);
+			my_ioctl(self->fd, VIDEO_SELECT_SOURCE, VIDEO_SOURCE_MEMORY);
+			my_ioctl(self->fd, VIDEO_FREEZE);
 		}
 		break;
 	case GST_STATE_CHANGE_PAUSED_TO_PLAYING:
 		GST_DEBUG_OBJECT (self,"GST_STATE_CHANGE_PAUSED_TO_PLAYING");
-		if (self->fd >= 0) ioctl(self->fd, VIDEO_CONTINUE);
+		if (self->fd >= 0) my_ioctl(self->fd, VIDEO_CONTINUE);
 		self->paused = FALSE;
 		break;
 	default:
@@ -1898,7 +1903,7 @@ static GstStateChangeReturn gst_dvbvideosink_change_state(GstElement *element, G
 	case GST_STATE_CHANGE_PLAYING_TO_PAUSED:
 		GST_DEBUG_OBJECT (self,"GST_STATE_CHANGE_PLAYING_TO_PAUSED");
 		self->paused = TRUE;
-		if (self->fd >= 0) ioctl(self->fd, VIDEO_FREEZE);
+		if (self->fd >= 0) my_ioctl(self->fd, VIDEO_FREEZE);
 		/* wakeup the poll */
 		write(self->unlockfd[1], "\x01", 1);
 		break;
