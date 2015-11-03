@@ -91,10 +91,6 @@ typedef struct video_codec_data
 #define VIDEO_SET_CODEC_DATA _IOW('o', 80, video_codec_data_t)
 #endif
 
-#define MPEG4P2_MAX_NVOP_SIZE        8
-#define MPEG4P2_VOP_STARTCODE        0x1B6
-#define MPEG4P2_USER_DATA_STARTCODE  0x1B2
-#define MPEG4P2_DTS_PTS_SHIFT        (40 * GST_MSECOND)
 
 static unsigned int mpeg4p2_find_startcode(const uint8_t *buf, int buf_size, int *pos)
 {

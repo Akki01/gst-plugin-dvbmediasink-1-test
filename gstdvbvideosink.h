@@ -61,6 +61,11 @@ G_BEGIN_DECLS
 #define GST_IS_DVBVIDEOSINK_CLASS(klass) \
   (G_TYPE_CHECK_CLASS_TYPE((klass),GST_TYPE_DVBVIDEOSINK))
 
+#define MPEG4P2_MAX_NVOP_SIZE        8
+#define MPEG4P2_VOP_STARTCODE        0x1B6
+#define MPEG4P2_USER_DATA_STARTCODE  0x1B2
+#define MPEG4P2_DTS_PTS_SHIFT        (40 * GST_MSECOND)
+
 typedef struct _GstDVBVideoSink		GstDVBVideoSink;
 typedef struct _GstDVBVideoSinkClass	GstDVBVideoSinkClass;
 typedef struct _GstDVBVideoSinkPrivate	GstDVBVideoSinkPrivate;
