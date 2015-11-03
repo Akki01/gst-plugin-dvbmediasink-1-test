@@ -517,6 +517,31 @@ static gboolean gst_dvbvideosink_event(GstBaseSink *sink, GstEvent *event)
 	case GST_EVENT_FLUSH_STOP:
 		if (self->fd >= 0) ioctl(self->fd, VIDEO_CLEAR_BUFFER);
 		GST_OBJECT_LOCK(self);
+		if (self->codec_type == CT_MPEG4_PART2)
+		{
+			gint i;
+			for (i=0; i < 5; i++)
+			{
+				if (self->b_frames[i])
+				{
+					gst_buffer_unref(self->b_frames[i]);
+					self->b_frames[i] = NULL;
+				}
+			}
+			if (self->second_ip_frame)
+			{
+				gst_buffer_unref(self->second_ip_frame);
+				self->second_ip_frame = NULL;
+			}
+			if (self->b_frame)
+			{
+				gst_buffer_unref(self->b_frame);
+				self->b_frame = NULL;
+			}
+			self->b_frames_count = 0;
+			self->try_unpack = TRUE;
+			self->fixed_pts_timestamps = FALSE;
+		}
 		self->must_send_header = TRUE;
 		while (self->queue)
 		{
@@ -2212,6 +2237,29 @@ static gboolean gst_dvbvideosink_stop(GstBaseSink *basesink)
 	while (self->queue)
 	{
 		queue_pop(&self->queue);
+	}
+
+	if (self->codec_type == CT_MPEG4_PART2)
+	{
+		gint i;
+		for (i=0; i < 5; i++)
+		{
+			if (self->b_frames[i])
+			{
+				gst_buffer_unref(self->b_frames[i]);
+				self->b_frames[i] = NULL;
+			}
+		}
+		if (self->second_ip_frame)
+		{
+			gst_buffer_unref(self->second_ip_frame);
+			self->second_ip_frame = NULL;
+		}
+		if (self->b_frame)
+		{
+			gst_buffer_unref(self->b_frame);
+			self->b_frame = NULL;
+		}
 	}
 
 	f = fopen("/proc/stb/vmpeg/0/fallback_framerate", "w");
