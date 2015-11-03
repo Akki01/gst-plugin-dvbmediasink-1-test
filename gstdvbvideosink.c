@@ -94,7 +94,7 @@ typedef struct video_codec_data
 #define MPEG4P2_MAX_NVOP_SIZE        8
 #define MPEG4P2_VOP_STARTCODE        0x1B6
 #define MPEG4P2_USER_DATA_STARTCODE  0x1B2
-#define MPEG4P2_BUFFER_DURATION      (40 * GST_MSECOND)
+#define MPEG4P2_DTS_PTS_SHIFT        (40 * GST_MSECOND)
 
 static unsigned int mpeg4p2_find_startcode(const uint8_t *buf, int buf_size, int *pos)
 {
@@ -852,7 +852,7 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 			/* store the packed B-frame */
 			GST_DEBUG_OBJECT(self, "storing packed B-Frame");
 			self->b_frame_buf = gst_buffer_copy_region(buffer, GST_BUFFER_COPY_ALL, pos_vop2, data_len - pos_vop2);
-			GST_BUFFER_DTS(self->b_frame_buf) = GST_BUFFER_DTS(buffer) + MPEG4P2_BUFFER_DURATION;
+			GST_BUFFER_DTS(self->b_frame_buf) = GST_BUFFER_DTS(buffer) + MPEG4P2_DTS_PTS_SHIFT;
 		}
 
 		if (nb_vop > 2)
@@ -879,7 +879,7 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 			else
 			{
 				GST_DEBUG_OBJECT(self, "store B-Frame");
-				GST_BUFFER_DTS(buffer) = GST_BUFFER_DTS(self->b_frame_buf) + MPEG4P2_BUFFER_DURATION;
+				GST_BUFFER_DTS(buffer) = GST_BUFFER_DTS(self->b_frame_buf) + MPEG4P2_DTS_PTS_SHIFT;
 				gst_buffer_unref(self->b_frame_buf);
 				self->b_frame_buf = buffer;
 				gst_buffer_ref(buffer);
@@ -950,7 +950,7 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 					// . . < > [P] -> PTS(P) = DTS(P), render P
 					if (!self->pts_written)
 					{
-						GST_BUFFER_PTS(buffer) = GST_BUFFER_DTS(buffer) + MPEG4P2_BUFFER_DURATION;
+						GST_BUFFER_PTS(buffer) = GST_BUFFER_DTS(buffer) + MPEG4P2_DTS_PTS_SHIFT;
 					}
 					// .P0. < > [P1] -> store P1
 					else if (!self->second_ip_frame)
@@ -966,7 +966,7 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 						if (!self->b_frames_count)
 						{
 							// .P0. <P1> [P2] ->  PTS(P1) = DTS(P1), render P1, store [P2]
-							GST_BUFFER_PTS(self->second_ip_frame) = GST_BUFFER_DTS(self->second_ip_frame) + MPEG4P2_BUFFER_DURATION;
+							GST_BUFFER_PTS(self->second_ip_frame) = GST_BUFFER_DTS(self->second_ip_frame) + MPEG4P2_DTS_PTS_SHIFT;
 							self->fixed_pts_timestamps = TRUE;
 							gst_dvbvideosink_render(sink, self->second_ip_frame);
 							self->fixed_pts_timestamps = FALSE;
@@ -983,16 +983,16 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 							// (DTS)IPB1B2B3 -> (PTS)IB1B2B3P
 
 							// (PTS)P = (DTS)B2
-							GST_BUFFER_PTS(self->second_ip_frame) = GST_BUFFER_DTS(self->b_frames[self->b_frames_count-1]) + MPEG4P2_BUFFER_DURATION;
+							GST_BUFFER_PTS(self->second_ip_frame) = GST_BUFFER_DTS(self->b_frames[self->b_frames_count-1]) + MPEG4P2_DTS_PTS_SHIFT;
 							// (PTS)B1 = (DTS)P
-							GST_BUFFER_PTS(self->b_frames[0]) = GST_BUFFER_DTS(self->second_ip_frame) + MPEG4P2_BUFFER_DURATION;
+							GST_BUFFER_PTS(self->b_frames[0]) = GST_BUFFER_DTS(self->second_ip_frame) + MPEG4P2_DTS_PTS_SHIFT;
 							gint i;
 							for (i=1; i < self->b_frames_count; i++)
 							{
 								// (PTS)B2 = (DTS)B1
 								// (PTS)B3 = (DTS)B2
 								// ..
-								GST_BUFFER_PTS(self->b_frames[i]) = GST_BUFFER_DTS(self->b_frames[i-1]) + MPEG4P2_BUFFER_DURATION;
+								GST_BUFFER_PTS(self->b_frames[i]) = GST_BUFFER_DTS(self->b_frames[i-1]) + MPEG4P2_DTS_PTS_SHIFT;
 							}
 							self->fixed_pts_timestamps = TRUE;
 							gst_dvbvideosink_render(sink, self->second_ip_frame);
