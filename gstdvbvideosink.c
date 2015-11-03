@@ -98,44 +98,52 @@ typedef struct video_codec_data
 
 static unsigned int mpeg4p2_find_startcode(const uint8_t *buf, int buf_size, int *pos)
 {
-    unsigned int startcode = 0xFF;
+	unsigned int startcode = 0xFF;
 
-    for (; *pos < buf_size;) {
-        startcode = ((startcode << 8) | buf[*pos]) & 0xFFFFFFFF;
-        *pos +=1;
-        if ((startcode & 0xFFFFFF00) != 0x100)
-            continue;  /* no startcode */
-        return startcode;
-    }
+	for (; *pos < buf_size;)
+	{
+		startcode = ((startcode << 8) | buf[*pos]) & 0xFFFFFFFF;
+		*pos +=1;
+		if ((startcode & 0xFFFFFF00) != 0x100)
+			continue;  /* no startcode */
+		return startcode;
+	}
 
-    return 0;
+	return 0;
 }
 
 /* determine the position of the packed marker in the userdata,
  * the number of VOPs and the position of the second VOP */
-static void scan_buffer(const uint8_t *buf, int buf_size,
-                        int *pos_p, int *nb_vop, int *pos_vop2) {
-    unsigned int startcode;
-    int pos, i;
+static void mpeg4p2_scan_buffer(const uint8_t *buf, int buf_size, int *pos_p, int *nb_vop, int *pos_vop2)
+{
+	unsigned int startcode;
+	int pos, i;
 
-    for (pos = 0; pos < buf_size;) {
-        startcode = mpeg4p2_find_startcode(buf, buf_size, &pos);
+	for (pos = 0; pos < buf_size;)
+	{
+		startcode = mpeg4p2_find_startcode(buf, buf_size, &pos);
 
-        if (startcode == MPEG4P2_USER_DATA_STARTCODE && pos_p) {
-            /* check if the (DivX) userdata string ends with 'p' (packed) */
-            for (i = 0; i < 255 && pos + i + 1 < buf_size; i++) {
-                if (buf[pos + i] == 'p' && buf[pos + i + 1] == '\0') {
-                    *pos_p = pos + i;
-                    break;
-                }
-            }
-        } else if (startcode == MPEG4P2_VOP_STARTCODE && nb_vop) {
-            *nb_vop += 1;
-            if (*nb_vop == 2 && pos_vop2) {
-                *pos_vop2 = pos - 4; /* subtract 4 bytes startcode */
-            }
-        }
-    }
+		if (startcode == MPEG4P2_USER_DATA_STARTCODE && pos_p)
+		{
+			/* check if the (DivX) userdata string ends with 'p' (packed) */
+			for (i = 0; i < 255 && pos + i + 1 < buf_size; i++)
+			{
+				if (buf[pos + i] == 'p' && buf[pos + i + 1] == '\0')
+				{
+					*pos_p = pos + i;
+					break;
+				}
+			}
+		}
+		else if (startcode == MPEG4P2_VOP_STARTCODE && nb_vop)
+		{
+			*nb_vop += 1;
+			if (*nb_vop == 2 && pos_vop2)
+			{
+				*pos_vop2 = pos - 4; /* subtract 4 bytes startcode */
+			}
+		}
+	}
 }
 
 #ifdef PACK_UNPACKED_XVID_DIVX5_BITSTREAM
@@ -839,7 +847,7 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 	if (self->codec_type == CT_MPEG4_PART2 && self->try_unpack)
 	{
 		int pos_p = -1, nb_vop = 0, pos_vop2 = -1;
-		scan_buffer(data, data_len, &pos_p, &nb_vop, &pos_vop2);
+		mpeg4p2_scan_buffer(data, data_len, &pos_p, &nb_vop, &pos_vop2);
 		GST_DEBUG_OBJECT(self, "pos_p=%d, num_vop=%d, pos_vop2=%d", pos_p, nb_vop, pos_vop2);
 		if (pos_vop2 >= 0)
 		{
