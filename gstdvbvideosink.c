@@ -942,6 +942,7 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 			self->try_unpack = FALSE;
 			gst_dvbvideosink_render(sink, tmp_buffer);
 			self->try_unpack = TRUE;
+			gst_buffer_unref(tmp_buffer);
 			goto ok;
 		}
 		else if (data_len <= MPEG4P2_MAX_NVOP_SIZE)
