@@ -419,7 +419,7 @@ static void gst_dvbvideosink_init(GstDVBVideoSink *self)
 	self->try_unpack = TRUE;
 	self->b_frame = NULL;
 	gint i;
-	for(i=0; i < 5; i++)
+	for(i=0; i < MPEG4P2_MAX_B_FRAMES_COUNT; i++)
 		self->b_frames[i] = NULL;
 	self->fixed_pts_timestamps = FALSE;
 	self->b_frames_count = 0;
@@ -516,7 +516,7 @@ static gboolean gst_dvbvideosink_event(GstBaseSink *sink, GstEvent *event)
 		if (self->codec_type == CT_MPEG4_PART2)
 		{
 			gint i;
-			for (i=0; i < 5; i++)
+			for (i=0; i < MPEG4P2_MAX_B_FRAMES_COUNT; i++)
 			{
 				if (self->b_frames[i])
 				{
@@ -2238,7 +2238,7 @@ static gboolean gst_dvbvideosink_stop(GstBaseSink *basesink)
 	if (self->codec_type == CT_MPEG4_PART2)
 	{
 		gint i;
-		for (i=0; i < 5; i++)
+		for (i=0; i < MPEG4P2_MAX_B_FRAMES_COUNT; i++)
 		{
 			if (self->b_frames[i])
 			{

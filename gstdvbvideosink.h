@@ -62,6 +62,7 @@ G_BEGIN_DECLS
   (G_TYPE_CHECK_CLASS_TYPE((klass),GST_TYPE_DVBVIDEOSINK))
 
 #define MPEG4P2_MAX_NVOP_SIZE        8
+#define MPEG4P2_MAX_B_FRAMES_COUNT   5
 #define MPEG4P2_VOP_STARTCODE        0x1B6
 #define MPEG4P2_USER_DATA_STARTCODE  0x1B2
 #define MPEG4P2_DTS_PTS_SHIFT        (40 * GST_MSECOND)
@@ -115,7 +116,7 @@ struct _GstDVBVideoSink
 	/* computing dts from pts for mpeg4p2 */
 	gint b_frames_count;
 	gboolean fixed_pts_timestamps;
-	GstBuffer *b_frames[5];
+	GstBuffer *b_frames[MPEG4P2_MAX_B_FRAMES_COUNT];
 	GstBuffer *second_ip_frame;
 
 	char saved_fallback_framerate[16];
