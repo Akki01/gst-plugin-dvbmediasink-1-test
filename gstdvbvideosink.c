@@ -1032,6 +1032,7 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 							{
 								gst_dvbvideosink_render(sink, self->b_frames[i]);
 								gst_buffer_unref(self->b_frames[i]);
+								self->b_frames[i] = NULL;
 							}
 							self->fixed_pts_timestamps = FALSE;
 							self->b_frames_count = 0;
