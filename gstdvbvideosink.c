@@ -421,8 +421,10 @@ static void gst_dvbvideosink_init(GstDVBVideoSink *self)
 	self->rate = 1.0;
 
 	self->try_unpack = TRUE;
-	self->b_frame_buf = NULL;
-
+	self->b_frame = NULL;
+	gint i;
+	for(i=0; i < 5; i++)
+		self->b_frames[i] = NULL;
 	self->fixed_pts_timestamps = FALSE;
 	self->b_frames_count = 0;
 	self->second_ip_frame = NULL;
@@ -851,16 +853,16 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 		GST_DEBUG_OBJECT(self, "pos_p=%d, num_vop=%d, pos_vop2=%d", pos_p, nb_vop, pos_vop2);
 		if (pos_vop2 >= 0)
 		{
-			if (self->b_frame_buf)
+			if (self->b_frame)
 			{
 				GST_WARNING_OBJECT(self, "Missing one N-VOP packet, discarding one B-frame");
-				gst_buffer_unref(self->b_frame_buf);
-				self->b_frame_buf = NULL;
+				gst_buffer_unref(self->b_frame);
+				self->b_frame = NULL;
 			}
 			/* store the packed B-frame */
 			GST_DEBUG_OBJECT(self, "storing packed B-Frame");
-			self->b_frame_buf = gst_buffer_copy_region(buffer, GST_BUFFER_COPY_ALL, pos_vop2, data_len - pos_vop2);
-			GST_BUFFER_DTS(self->b_frame_buf) = GST_BUFFER_DTS(buffer) + MPEG4P2_DTS_PTS_SHIFT;
+			self->b_frame = gst_buffer_copy_region(buffer, GST_BUFFER_COPY_ALL, pos_vop2, data_len - pos_vop2);
+			GST_BUFFER_DTS(self->b_frame) = GST_BUFFER_DTS(buffer) + MPEG4P2_DTS_PTS_SHIFT;
 		}
 
 		if (nb_vop > 2)
@@ -868,28 +870,28 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 			GST_WARNING_OBJECT(self, "Found %d VOP headers in one packet, only unpacking one.", nb_vop);
 		}
 
-		if (nb_vop == 1 && self->b_frame_buf)
+		if (nb_vop == 1 && self->b_frame)
 		{
 			/* render packed B-Frame */
 			GST_DEBUG_OBJECT(self, "render prev B-Frame");
 			self->try_unpack = FALSE;
-			gst_dvbvideosink_render(sink, self->b_frame_buf);
+			gst_dvbvideosink_render(sink, self->b_frame);
 			self->try_unpack = TRUE;
 
 			if (data_len <= MPEG4P2_MAX_NVOP_SIZE)
 			{
 				/* N-VOP */
 				GST_DEBUG_OBJECT(self, "Skipping N-VOP");
-				gst_buffer_unref(self->b_frame_buf);
-				self->b_frame_buf = NULL;
+				gst_buffer_unref(self->b_frame);
+				self->b_frame = NULL;
 				goto ok;
 			}
 			else
 			{
 				GST_DEBUG_OBJECT(self, "store B-Frame");
-				GST_BUFFER_DTS(buffer) = GST_BUFFER_DTS(self->b_frame_buf) + MPEG4P2_DTS_PTS_SHIFT;
-				gst_buffer_unref(self->b_frame_buf);
-				self->b_frame_buf = buffer;
+				GST_BUFFER_DTS(buffer) = GST_BUFFER_DTS(self->b_frame) + MPEG4P2_DTS_PTS_SHIFT;
+				gst_buffer_unref(self->b_frame);
+				self->b_frame = buffer;
 				gst_buffer_ref(buffer);
 				goto ok;
 			}

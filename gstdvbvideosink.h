@@ -103,10 +103,11 @@ struct _GstDVBVideoSink
 	gboolean must_pack_bitstream;
 	GstBuffer *prev_frame;
 #endif
-	
+	/* unpacking mpeg4p2 */
 	gboolean try_unpack;
-	GstBuffer *b_frame_buf;
+	GstBuffer *b_frame;
 	
+	/* computing dts from pts for mpeg4p2 */
 	gint b_frames_count;
 	gboolean fixed_pts_timestamps;
 	GstBuffer *b_frames[5];
