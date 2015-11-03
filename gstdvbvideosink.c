@@ -91,6 +91,53 @@ typedef struct video_codec_data
 #define VIDEO_SET_CODEC_DATA _IOW('o', 80, video_codec_data_t)
 #endif
 
+#define MPEG4P2_MAX_NVOP_SIZE        8
+#define MPEG4P2_VOP_STARTCODE        0x1B6
+#define MPEG4P2_USER_DATA_STARTCODE  0x1B2
+#define MPEG4P2_BUFFER_DURATION      (40 * GST_MSECOND)
+
+static unsigned int mpeg4p2_find_startcode(const uint8_t *buf, int buf_size, int *pos)
+{
+    unsigned int startcode = 0xFF;
+
+    for (; *pos < buf_size;) {
+        startcode = ((startcode << 8) | buf[*pos]) & 0xFFFFFFFF;
+        *pos +=1;
+        if ((startcode & 0xFFFFFF00) != 0x100)
+            continue;  /* no startcode */
+        return startcode;
+    }
+
+    return 0;
+}
+
+/* determine the position of the packed marker in the userdata,
+ * the number of VOPs and the position of the second VOP */
+static void scan_buffer(const uint8_t *buf, int buf_size,
+                        int *pos_p, int *nb_vop, int *pos_vop2) {
+    unsigned int startcode;
+    int pos, i;
+
+    for (pos = 0; pos < buf_size;) {
+        startcode = mpeg4p2_find_startcode(buf, buf_size, &pos);
+
+        if (startcode == MPEG4P2_USER_DATA_STARTCODE && pos_p) {
+            /* check if the (DivX) userdata string ends with 'p' (packed) */
+            for (i = 0; i < 255 && pos + i + 1 < buf_size; i++) {
+                if (buf[pos + i] == 'p' && buf[pos + i + 1] == '\0') {
+                    *pos_p = pos + i;
+                    break;
+                }
+            }
+        } else if (startcode == MPEG4P2_VOP_STARTCODE && nb_vop) {
+            *nb_vop += 1;
+            if (*nb_vop == 2 && pos_vop2) {
+                *pos_vop2 = pos - 4; /* subtract 4 bytes startcode */
+            }
+        }
+    }
+}
+
 #ifdef PACK_UNPACKED_XVID_DIVX5_BITSTREAM
 struct bitstream
 {
@@ -185,7 +232,6 @@ GST_STATIC_PAD_TEMPLATE (
 #ifdef HAVE_MPEG4
 	"video/mpeg, "
 		"mpegversion = (int) 4, "
-		"parsed = (boolean) true, "
 		VIDEO_CAPS "; "
 #endif
 	"video/mpeg, "
@@ -224,7 +270,6 @@ GST_STATIC_PAD_TEMPLATE (
 #else
 		VIDEO_CAPS
 #endif
-		", parsed = (boolean) true "
 		", divxversion = (int) [4, 6];"
 	"video/x-xvid, "
 #ifdef HAVE_LIMITED_MPEG4V2
@@ -366,6 +411,13 @@ static void gst_dvbvideosink_init(GstDVBVideoSink *self)
 	self->unlockfd[0] = self->unlockfd[1] = -1;
 	self->saved_fallback_framerate[0] = 0;
 	self->rate = 1.0;
+
+	self->try_unpack = TRUE;
+	self->b_frame_buf = NULL;
+
+	self->fixed_pts_timestamps = FALSE;
+	self->b_frames_count = 0;
+	self->second_ip_frame = NULL;
 
 	gst_base_sink_set_sync(GST_BASE_SINK(self), FALSE);
 	gst_base_sink_set_async_enabled(GST_BASE_SINK(self), TRUE);
@@ -784,6 +836,265 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 #ifdef PACK_UNPACKED_XVID_DIVX5_BITSTREAM
 	gboolean commit_prev_frame_data = FALSE, cache_prev_frame = FALSE;
 #endif
+	if (self->codec_type == CT_MPEG4_PART2 && self->try_unpack)
+	{
+		int pos_p = -1, nb_vop = 0, pos_vop2 = -1;
+		scan_buffer(data, data_len, &pos_p, &nb_vop, &pos_vop2);
+		GST_DEBUG_OBJECT(self, "pos_p=%d, num_vop=%d, pos_vop2=%d", pos_p, nb_vop, pos_vop2);
+		if (pos_vop2 >= 0)
+		{
+			if (self->b_frame_buf)
+			{
+				GST_WARNING_OBJECT(self, "Missing one N-VOP packet, discarding one B-frame");
+				gst_buffer_unref(self->b_frame_buf);
+				self->b_frame_buf = NULL;
+			}
+			/* store the packed B-frame */
+			GST_DEBUG_OBJECT(self, "storing packed B-Frame");
+			self->b_frame_buf = gst_buffer_copy_region(buffer, GST_BUFFER_COPY_ALL, pos_vop2, data_len - pos_vop2);
+			GST_BUFFER_DTS(self->b_frame_buf) = GST_BUFFER_DTS(buffer) + MPEG4P2_BUFFER_DURATION;
+		}
+
+		if (nb_vop > 2)
+		{
+			GST_WARNING_OBJECT(self, "Found %d VOP headers in one packet, only unpacking one.", nb_vop);
+		}
+
+		if (nb_vop == 1 && self->b_frame_buf)
+		{
+			/* render packed B-Frame */
+			GST_DEBUG_OBJECT(self, "render prev B-Frame");
+			self->try_unpack = FALSE;
+			gst_dvbvideosink_render(sink, self->b_frame_buf);
+			self->try_unpack = TRUE;
+
+			if (data_len <= MPEG4P2_MAX_NVOP_SIZE)
+			{
+				/* N-VOP */
+				GST_DEBUG_OBJECT(self, "Skipping N-VOP");
+				gst_buffer_unref(self->b_frame_buf);
+				self->b_frame_buf = NULL;
+				goto ok;
+			}
+			else
+			{
+				GST_DEBUG_OBJECT(self, "store B-Frame");
+				GST_BUFFER_DTS(buffer) = GST_BUFFER_DTS(self->b_frame_buf) + MPEG4P2_BUFFER_DURATION;
+				gst_buffer_unref(self->b_frame_buf);
+				self->b_frame_buf = buffer;
+				gst_buffer_ref(buffer);
+				goto ok;
+			}
+		}
+		else if (nb_vop >= 2)
+		{
+			/* render first frame of the packed frame*/
+			GST_DEBUG_OBJECT(self, "render first frame of packed PB-Frame");
+			GstBuffer *bfirst = gst_buffer_copy_region(buffer, GST_BUFFER_COPY_ALL, 0, pos_vop2);
+			self->try_unpack = FALSE;
+			gst_dvbvideosink_render(sink, bfirst);
+			gst_buffer_unref(bfirst);
+			self->try_unpack = TRUE;
+			goto ok;
+		}
+		else if (pos_p >= 0)
+		{
+			GST_DEBUG_OBJECT(self, "Updating DivX userdata (replacing trailing 'p')");
+			GstMapInfo map;
+			GstBuffer *tmp_buffer;
+			guint8 *data_ptr;
+			tmp_buffer = gst_buffer_copy(buffer);
+			gst_buffer_map(tmp_buffer, &map, GST_MAP_WRITE);
+			data_ptr = map.data;
+			data_ptr[pos_p] = 'n';
+			gst_buffer_unmap(tmp_buffer, &map);
+			self->try_unpack = FALSE;
+			gst_dvbvideosink_render(sink, tmp_buffer);
+			self->try_unpack = TRUE;
+			goto ok;
+		}
+		else if (data_len <= MPEG4P2_MAX_NVOP_SIZE)
+		{
+			/*
+			 * this one is wierd, we didn't encounter two or more
+			 * packed frames in one buffer, but there can still
+			 * be buffers with same DTS timestamp as previous buffer
+			 * with size <= MAX_NVOP_SIZE so we drop them too.
+			 */
+
+			GST_DEBUG_OBJECT(self, "Skipping N-VOP");
+			goto ok;
+		}
+	}
+
+	if (self->codec_type == CT_MPEG4_PART2 && !self->fixed_pts_timestamps && GST_BUFFER_DTS_IS_VALID(buffer))
+	{
+		unsigned int pos = 0;
+		while (pos < data_len)
+		{
+			if (memcmp(&data[pos], "\x00\x00\x01\xb6", 4))
+			{
+				pos++;
+				continue;
+			}
+			pos += 4;
+
+			// .X. - means rendered X-frame
+			// <X> - means stored X-frame
+			// [X] - means current X-frame
+
+			switch ((data[pos] & 0xC0) >> 6)
+			{
+				case 0: // I-Frame
+				case 1: // P-Frame
+					// . . < > [P] -> PTS(P) = DTS(P), render P
+					if (!self->pts_written)
+					{
+						GST_BUFFER_PTS(buffer) = GST_BUFFER_DTS(buffer) + MPEG4P2_BUFFER_DURATION;
+					}
+					// .P0. < > [P1] -> store P1
+					else if (!self->second_ip_frame)
+					{
+						GST_LOG_OBJECT(self, "Store second (IP)-Frame (1)");
+						self->second_ip_frame = buffer;
+						gst_buffer_ref(buffer);
+						goto ok;
+					}
+					else
+					{
+						GST_LOG_OBJECT(self, "B-Frames count in between (IP)-Frames = %d", self->b_frames_count);
+						if (!self->b_frames_count)
+						{
+							// .P0. <P1> [P2] ->  PTS(P1) = DTS(P1), render P1, store [P2]
+							GST_BUFFER_PTS(self->second_ip_frame) = GST_BUFFER_DTS(self->second_ip_frame) + MPEG4P2_BUFFER_DURATION;
+							self->fixed_pts_timestamps = TRUE;
+							gst_dvbvideosink_render(sink, self->second_ip_frame);
+							self->fixed_pts_timestamps = FALSE;
+							gst_buffer_unref(self->second_ip_frame);
+							self->second_ip_frame = buffer;
+							gst_buffer_ref(buffer);
+							GST_LOG_OBJECT(self, "Store second (IP)-Frame (2)");
+							goto ok;
+						}
+						else
+						{
+							// .P0. <P1,B1,B2..Bx>[P2] -> PTS(P1) = DTS(Bx), PTS(B1) = DTS(P1), PTS(By) = DTS(By-1), render P1 B1..Bx, store P2
+
+							// (DTS)IPB1B2B3 -> (PTS)IB1B2B3P
+
+							// (PTS)P = (DTS)B2
+							GST_BUFFER_PTS(self->second_ip_frame) = GST_BUFFER_DTS(self->b_frames[self->b_frames_count-1]) + MPEG4P2_BUFFER_DURATION;
+							// (PTS)B1 = (DTS)P
+							GST_BUFFER_PTS(self->b_frames[0]) = GST_BUFFER_DTS(self->second_ip_frame) + MPEG4P2_BUFFER_DURATION;
+							gint i;
+							for (i=1; i < self->b_frames_count; i++)
+							{
+								// (PTS)B2 = (DTS)B1
+								// (PTS)B3 = (DTS)B2
+								// ..
+								GST_BUFFER_PTS(self->b_frames[i]) = GST_BUFFER_DTS(self->b_frames[i-1]) + MPEG4P2_BUFFER_DURATION;
+							}
+							self->fixed_pts_timestamps = TRUE;
+							gst_dvbvideosink_render(sink, self->second_ip_frame);
+							for (i=0; i < self->b_frames_count; i++)
+							{
+								gst_dvbvideosink_render(sink, self->b_frames[i]);
+								gst_buffer_unref(self->b_frames[i]);
+							}
+							self->fixed_pts_timestamps = FALSE;
+							self->b_frames_count = 0;
+							gst_buffer_unref(self->second_ip_frame);
+							self->second_ip_frame = buffer;
+							gst_buffer_ref(buffer);
+							GST_LOG_OBJECT(self, "Store second (IP)-Frame (3)");
+							goto ok;
+						}
+					}
+					break;
+				case 3: // S-Frame
+					break;
+				case 2: // B-Frame
+					if (!self->second_ip_frame)
+					{
+						GST_ERROR_OBJECT(self, "cannot predict B-Frame without surrounding I/P-Frames!");
+						goto error;
+					}
+					if (GST_BUFFER_PTS (buffer) != GST_CLOCK_TIME_NONE && 0)
+					{
+						GST_DEBUG_OBJECT(self, "We have B frames with PTS timestamps set! setting passthrough mode");
+						self->fixed_pts_timestamps = TRUE;
+						gst_dvbvideosink_render(sink, self->second_ip_frame);
+						gst_buffer_unref(self->second_ip_frame);
+						self->second_ip_frame = NULL;
+					}
+					else
+					{
+						GST_LOG_OBJECT(self, "Store B-Frame [%d]", self->b_frames_count);
+						self->b_frames[self->b_frames_count++] = buffer;
+						gst_buffer_ref(buffer);
+						goto ok;
+					}
+					break;
+				case 4: // N-Frame
+				default:
+					g_warning("unhandled divx5/xvid frame type %d\n", (data[pos] & 0xC0) >> 6);
+					break;
+			}
+		}
+	}
+	if (self->codec_type == CT_MPEG4_PART2 && 0)
+	{
+		gchar dts_str[64], pts_str[64], dur_str[64];
+
+		if (GST_BUFFER_DTS (buffer) != GST_CLOCK_TIME_NONE)
+		{
+			g_snprintf (dts_str, sizeof (dts_str), "%" GST_TIME_FORMAT,
+			GST_TIME_ARGS (GST_BUFFER_DTS (buffer)));
+		}
+		else
+		{
+			g_strlcpy (dts_str, "none", sizeof (dts_str));
+		}
+		if (GST_BUFFER_PTS (buffer) != GST_CLOCK_TIME_NONE)
+		{
+			g_snprintf (pts_str, sizeof (pts_str), "%" GST_TIME_FORMAT,
+			GST_TIME_ARGS (GST_BUFFER_PTS (buffer)));
+		}
+		else
+		{
+			g_strlcpy (pts_str, "none", sizeof (pts_str));
+		}
+		unsigned int pos = 0;
+		gboolean iframe = FALSE;
+		while (pos < data_len)
+		{
+			if (memcmp(&data[pos], "\x00\x00\x01\xb6", 4))
+			{
+				pos++;
+				continue;
+			}
+			pos += 4;
+			switch ((data[pos] & 0xC0) >> 6)
+			{
+				case 0: // I-Frame
+					GST_INFO_OBJECT(self, "I-Frame pts: %s , dts: %s , size: %u", pts_str, dts_str, (guint) gst_buffer_get_size (buffer));
+					break;
+				case 1: // P-Frame
+					GST_INFO_OBJECT(self, "P-Frame pts: %s , dts: %s , size: %u", pts_str, dts_str, (guint) gst_buffer_get_size (buffer));
+					break;
+				case 3: // S-Frame
+					GST_INFO_OBJECT(self, "S-Frame pts: %s , dts: %s , size: %u", pts_str, dts_str, (guint) gst_buffer_get_size (buffer));
+					break;
+				case 2: // B-Frame
+					GST_INFO_OBJECT(self, "B-Frame pts: %s , dts: %s , size: %u", pts_str, dts_str, (guint) gst_buffer_get_size (buffer));
+					break;
+				case 4: // N-Frame
+				default:
+					g_warning("unhandled divx5/xvid frame type %d\n", (data[pos] & 0xC0) >> 6);
+					break;
+			}
+		}
+	}
 
 #ifdef PACK_UNPACKED_XVID_DIVX5_BITSTREAM
 	if (self->must_pack_bitstream)
@@ -863,9 +1174,6 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 		}
 	}
 #endif
-	/* remove dummy packed B-Frame */
-	if (self->codec_type == CT_MPEG4_PART2 && data_len < 10)
-		goto ok;
 
 	pes_header[0] = 0;
 	pes_header[1] = 0;
@@ -1657,9 +1965,6 @@ static gboolean gst_dvbvideosink_set_caps(GstBaseSink *basesink, GstCaps *caps)
 					gst_buffer_ref (self->codec_data);
 				}
 				GST_INFO_OBJECT (self, "MIMETYPE video/x-divx vers. %d -> STREAMTYPE_MPEG4_Part2", divxversion);
-#ifdef PACK_UNPACKED_XVID_DIVX5_BITSTREAM
-				self->must_pack_bitstream = TRUE;
-#endif
 			break;
 			default:
 				GST_ELEMENT_ERROR (self, STREAM, FORMAT, (NULL), ("unhandled divx version %i", divxversion));
