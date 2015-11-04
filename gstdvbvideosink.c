@@ -945,18 +945,6 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 			gst_buffer_unref(tmp_buffer);
 			goto ok;
 		}
-		else if (data_len <= MPEG4P2_MAX_NVOP_SIZE)
-		{
-			/*
-			 * this one is wierd, we didn't encounter two or more
-			 * packed frames in one buffer, but there can still
-			 * be buffers with same DTS timestamp as previous buffer
-			 * with size <= MAX_NVOP_SIZE so we drop them too.
-			 */
-
-			GST_DEBUG_OBJECT(self, "Skipping N-VOP");
-			goto ok;
-		}
 	}
 
 	if (self->codec_type == CT_MPEG4_PART2 && !self->fixed_pts_timestamps && GST_BUFFER_DTS_IS_VALID(buffer))
