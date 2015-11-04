@@ -115,6 +115,7 @@ struct _GstDVBVideoSink
 	/* computing dts from pts for mpeg4p2 */
 	gint b_frames_count;
 	gboolean fixed_pts_timestamps;
+	gboolean first_ip_frame_written;
 	GstBuffer *b_frames[MPEG4P2_MAX_B_FRAMES_COUNT];
 	GstBuffer *second_ip_frame;
 	GstClockTime buffer_duration;

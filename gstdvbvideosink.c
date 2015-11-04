@@ -423,6 +423,7 @@ static void gst_dvbvideosink_init(GstDVBVideoSink *self)
 		self->b_frames[i] = NULL;
 	self->fixed_pts_timestamps = FALSE;
 	self->b_frames_count = 0;
+	self->first_ip_frame_written = FALSE;
 	self->second_ip_frame = NULL;
 	self->buffer_duration = GST_CLOCK_TIME_NONE;
 
@@ -538,6 +539,7 @@ static gboolean gst_dvbvideosink_event(GstBaseSink *sink, GstEvent *event)
 			self->b_frames_count = 0;
 			self->try_unpack = TRUE;
 			self->fixed_pts_timestamps = FALSE;
+			self->first_ip_frame_written = FALSE;
 		}
 		self->must_send_header = TRUE;
 		while (self->queue)
@@ -974,8 +976,9 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 				case 0: // I-Frame
 				case 1: // P-Frame
 					// . . < > [P] -> PTS(P) = DTS(P), render P
-					if (!self->pts_written)
+					if (!self->first_ip_frame_written)
 					{
+						self->first_ip_frame_written = TRUE;
 						GST_BUFFER_PTS(buffer) = GST_BUFFER_DTS(buffer) + self->buffer_duration;
 					}
 					// .P0. < > [P1] -> store P1
@@ -1047,8 +1050,8 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 				case 2: // B-Frame
 					if (!self->second_ip_frame)
 					{
-						GST_ERROR_OBJECT(self, "cannot predict B-Frame without surrounding I/P-Frames!");
-						goto error;
+						GST_DEBUG_OBJECT(self, "cannot predict B-Frame without surrounding I/P-Frames, dropping");
+						goto ok;
 					}
 					if (GST_BUFFER_PTS (buffer) != GST_CLOCK_TIME_NONE && 0)
 					{
