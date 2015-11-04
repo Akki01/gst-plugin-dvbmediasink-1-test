@@ -424,6 +424,7 @@ static void gst_dvbvideosink_init(GstDVBVideoSink *self)
 	self->fixed_pts_timestamps = FALSE;
 	self->b_frames_count = 0;
 	self->second_ip_frame = NULL;
+	self->buffer_duration = GST_CLOCK_TIME_NONE;
 
 	gst_base_sink_set_sync(GST_BASE_SINK(self), FALSE);
 	gst_base_sink_set_async_enabled(GST_BASE_SINK(self), TRUE);
@@ -867,6 +868,11 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 #ifdef PACK_UNPACKED_XVID_DIVX5_BITSTREAM
 	gboolean commit_prev_frame_data = FALSE, cache_prev_frame = FALSE;
 #endif
+	/* in case there is no framerate in caps, we try to get buffer duration from buffer */
+	if (self->codec_type == CT_MPEG4_PART2 && self->buffer_duration == GST_CLOCK_TIME_NONE)
+	{
+		self->buffer_duration = GST_BUFFER_DURATION(buffer);
+	}
 	if (self->codec_type == CT_MPEG4_PART2 && self->try_unpack)
 	{
 		int pos_p = -1, nb_vop = 0, pos_vop2 = -1;
@@ -883,7 +889,7 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 			/* store the packed B-frame */
 			GST_DEBUG_OBJECT(self, "storing packed B-Frame");
 			self->b_frame = gst_buffer_copy_region(buffer, GST_BUFFER_COPY_ALL, pos_vop2, data_len - pos_vop2);
-			GST_BUFFER_DTS(self->b_frame) = GST_BUFFER_DTS(buffer) + MPEG4P2_DTS_PTS_SHIFT;
+			GST_BUFFER_DTS(self->b_frame) = GST_BUFFER_DTS(buffer) + self->buffer_duration;
 		}
 
 		if (nb_vop > 2)
@@ -910,7 +916,7 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 			else
 			{
 				GST_DEBUG_OBJECT(self, "store B-Frame");
-				GST_BUFFER_DTS(buffer) = GST_BUFFER_DTS(self->b_frame) + MPEG4P2_DTS_PTS_SHIFT;
+				GST_BUFFER_DTS(buffer) = GST_BUFFER_DTS(self->b_frame) + self->buffer_duration;
 				gst_buffer_unref(self->b_frame);
 				self->b_frame = buffer;
 				gst_buffer_ref(buffer);
@@ -970,7 +976,7 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 					// . . < > [P] -> PTS(P) = DTS(P), render P
 					if (!self->pts_written)
 					{
-						GST_BUFFER_PTS(buffer) = GST_BUFFER_DTS(buffer) + MPEG4P2_DTS_PTS_SHIFT;
+						GST_BUFFER_PTS(buffer) = GST_BUFFER_DTS(buffer) + self->buffer_duration;
 					}
 					// .P0. < > [P1] -> store P1
 					else if (!self->second_ip_frame)
@@ -986,7 +992,7 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 						if (!self->b_frames_count)
 						{
 							// .P0. <P1> [P2] ->  PTS(P1) = DTS(P1), render P1, store [P2]
-							GST_BUFFER_PTS(self->second_ip_frame) = GST_BUFFER_DTS(self->second_ip_frame) + MPEG4P2_DTS_PTS_SHIFT;
+							GST_BUFFER_PTS(self->second_ip_frame) = GST_BUFFER_DTS(self->second_ip_frame) + self->buffer_duration;
 							self->fixed_pts_timestamps = TRUE;
 							self->try_unpack = FALSE;
 							gst_dvbvideosink_render(sink, self->second_ip_frame);
@@ -1005,16 +1011,16 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 							// (DTS)IPB1B2B3 -> (PTS)IB1B2B3P
 
 							// (PTS)P = (DTS)B2
-							GST_BUFFER_PTS(self->second_ip_frame) = GST_BUFFER_DTS(self->b_frames[self->b_frames_count-1]) + MPEG4P2_DTS_PTS_SHIFT;
+							GST_BUFFER_PTS(self->second_ip_frame) = GST_BUFFER_DTS(self->b_frames[self->b_frames_count-1]) + self->buffer_duration;
 							// (PTS)B1 = (DTS)P
-							GST_BUFFER_PTS(self->b_frames[0]) = GST_BUFFER_DTS(self->second_ip_frame) + MPEG4P2_DTS_PTS_SHIFT;
+							GST_BUFFER_PTS(self->b_frames[0]) = GST_BUFFER_DTS(self->second_ip_frame) + self->buffer_duration;
 							gint i;
 							for (i=1; i < self->b_frames_count; i++)
 							{
 								// (PTS)B2 = (DTS)B1
 								// (PTS)B3 = (DTS)B2
 								// ..
-								GST_BUFFER_PTS(self->b_frames[i]) = GST_BUFFER_DTS(self->b_frames[i-1]) + MPEG4P2_DTS_PTS_SHIFT;
+								GST_BUFFER_PTS(self->b_frames[i]) = GST_BUFFER_DTS(self->b_frames[i-1]) + self->buffer_duration;
 							}
 							self->fixed_pts_timestamps = TRUE;
 							self->try_unpack = FALSE;
@@ -2047,6 +2053,7 @@ static gboolean gst_dvbvideosink_set_caps(GstBaseSink *basesink, GstCaps *caps)
 				fprintf(f, "%d", valid_framerates[best]);
 				fclose(f);
 			}
+			self->buffer_duration = 1000 / ((double)numerator * 1000 / denominator) * GST_SECOND;
 		}
 		if (self->playing)
 		{

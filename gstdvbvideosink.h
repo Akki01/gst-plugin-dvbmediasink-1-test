@@ -65,7 +65,6 @@ G_BEGIN_DECLS
 #define MPEG4P2_MAX_B_FRAMES_COUNT   5
 #define MPEG4P2_VOP_STARTCODE        0x1B6
 #define MPEG4P2_USER_DATA_STARTCODE  0x1B2
-#define MPEG4P2_DTS_PTS_SHIFT        (40 * GST_MSECOND)
 
 typedef struct _GstDVBVideoSink		GstDVBVideoSink;
 typedef struct _GstDVBVideoSinkClass	GstDVBVideoSinkClass;
@@ -118,6 +117,7 @@ struct _GstDVBVideoSink
 	gboolean fixed_pts_timestamps;
 	GstBuffer *b_frames[MPEG4P2_MAX_B_FRAMES_COUNT];
 	GstBuffer *second_ip_frame;
+	GstClockTime buffer_duration;
 
 	char saved_fallback_framerate[16];
 
