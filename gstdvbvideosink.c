@@ -988,7 +988,9 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 							// .P0. <P1> [P2] ->  PTS(P1) = DTS(P1), render P1, store [P2]
 							GST_BUFFER_PTS(self->second_ip_frame) = GST_BUFFER_DTS(self->second_ip_frame) + MPEG4P2_DTS_PTS_SHIFT;
 							self->fixed_pts_timestamps = TRUE;
+							self->try_unpack = FALSE;
 							gst_dvbvideosink_render(sink, self->second_ip_frame);
+							self->try_unpack = TRUE;
 							self->fixed_pts_timestamps = FALSE;
 							gst_buffer_unref(self->second_ip_frame);
 							self->second_ip_frame = buffer;
@@ -1015,6 +1017,7 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 								GST_BUFFER_PTS(self->b_frames[i]) = GST_BUFFER_DTS(self->b_frames[i-1]) + MPEG4P2_DTS_PTS_SHIFT;
 							}
 							self->fixed_pts_timestamps = TRUE;
+							self->try_unpack = FALSE;
 							gst_dvbvideosink_render(sink, self->second_ip_frame);
 							for (i=0; i < self->b_frames_count; i++)
 							{
@@ -1022,6 +1025,7 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 								gst_buffer_unref(self->b_frames[i]);
 								self->b_frames[i] = NULL;
 							}
+							self->try_unpack = TRUE;
 							self->fixed_pts_timestamps = FALSE;
 							self->b_frames_count = 0;
 							gst_buffer_unref(self->second_ip_frame);
