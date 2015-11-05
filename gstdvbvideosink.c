@@ -873,6 +873,11 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 	/* in case there is no framerate in caps, we try to get buffer duration from buffer */
 	if (self->codec_type == CT_MPEG4_PART2 && self->buffer_duration == GST_CLOCK_TIME_NONE)
 	{
+		if (!GST_BUFFER_DURATION_IS_VALID(buffer))
+		{
+			GST_WARNING_OBJECT(self, "cannot retrieve buffer duration, dropping");
+			goto ok;
+		}
 		self->buffer_duration = GST_BUFFER_DURATION(buffer);
 	}
 	if (self->codec_type == CT_MPEG4_PART2 && self->try_unpack)
