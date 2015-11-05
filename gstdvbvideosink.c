@@ -1066,6 +1066,11 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 						gst_buffer_unref(self->second_ip_frame);
 						self->second_ip_frame = NULL;
 					}
+					else if(self->b_frames_count == MPEG4P2_MAX_B_FRAMES_COUNT)
+					{
+						GST_ERROR_OBJECT(self, "oops max B-frames count = %d, reached", MPEG4P2_MAX_B_FRAMES_COUNT);
+						goto error;
+					}
 					else
 					{
 						GST_LOG_OBJECT(self, "Store B-Frame [%d]", self->b_frames_count);
