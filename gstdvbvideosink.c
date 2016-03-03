@@ -339,6 +339,7 @@ static void gst_dvbvideosink_init(GstDVBVideoSink *self, GstDVBVideoSinkClass *g
 static void gst_dvbvideosink_init(GstDVBVideoSink *self)
 #endif
 {
+	self->wait_for_keyframe = FALSE;
 	self->must_send_header = TRUE;
 	self->h264_nal_len_size = 0;
 	self->pesheader_buffer = NULL;
@@ -456,6 +457,7 @@ static gboolean gst_dvbvideosink_event(GstBaseSink *sink, GstEvent *event)
 			queue_pop(&self->queue);
 		}
 		self->flushing = FALSE;
+		self->wait_for_keyframe = TRUE;
 		GST_OBJECT_UNLOCK(self);
 		break;
 	case GST_EVENT_EOS:
@@ -531,6 +533,7 @@ static gboolean gst_dvbvideosink_event(GstBaseSink *sink, GstEvent *event)
 		pos = segment->position;
 #endif
 		GST_DEBUG_OBJECT(self, "GST_EVENT_NEWSEGMENT rate=%f\n", rate);
+		GST_DEBUG_OBJECT (self, "configured segment %" GST_SEGMENT_FORMAT, segment);
 		if (format == GST_FORMAT_TIME)
 		{
 			self->timestamp_offset = start - pos;
@@ -749,6 +752,16 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 	if (self->fd < 0)
 	{
 		return GST_FLOW_OK;
+	}
+	if (self->wait_for_keyframe)
+	{
+		if (GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DELTA_UNIT))
+		{
+			GST_DEBUG_OBJECT(self, "dropping non-keyframe buffer");
+			return GST_FLOW_OK;
+		}
+		else
+			self->wait_for_keyframe = FALSE;
 	}
 
 #if GST_VERSION_MAJOR < 1

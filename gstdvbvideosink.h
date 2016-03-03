@@ -109,6 +109,7 @@ struct _GstDVBVideoSink
 
 	char saved_fallback_framerate[16];
 
+	gboolean wait_for_keyframe;
 	gdouble rate;
 	gboolean playing, paused, flushing, unlocking;
 	gboolean pts_written;

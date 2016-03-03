@@ -911,7 +911,7 @@ static gboolean gst_dvbaudiosink_event(GstBaseSink *sink, GstEvent *event)
 		pos = segment->position;
 #endif
 		GST_DEBUG_OBJECT(self, "GST_EVENT_NEWSEGMENT rate=%f %d\n", rate, format);
-		
+		GST_DEBUG_OBJECT (self, "configured segment %" GST_SEGMENT_FORMAT, segment);
 		if (format == GST_FORMAT_TIME)
 		{
 			self->timestamp_offset = start - pos;
