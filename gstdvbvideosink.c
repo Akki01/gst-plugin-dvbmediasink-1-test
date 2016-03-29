@@ -76,8 +76,6 @@
 #include <gst/gst.h>
 #include <gst/base/gstbasesink.h>
 
-#define PACK_UNPACKED_XVID_DIVX5_BITSTREAM
-
 #include "common.h"
 #include "gstdvbvideosink.h"
 #include "gstdvbsink-marshal.h"
@@ -91,64 +89,6 @@ typedef struct video_codec_data
 #define VIDEO_SET_CODEC_DATA _IOW('o', 80, video_codec_data_t)
 #endif
 
-#ifdef PACK_UNPACKED_XVID_DIVX5_BITSTREAM
-struct bitstream
-{
-	guint8 *data;
-	guint8 last;
-	int avail;
-};
-
-void bitstream_init(struct bitstream *bit, const void *buffer, gboolean wr)
-{
-	bit->data = (guint8*) buffer;
-	if (wr) {
-		bit->avail = 0;
-		bit->last = 0;
-	}
-	else {
-		bit->avail = 8;
-		bit->last = *bit->data++;
-	}
-}
-
-unsigned long bitstream_get(struct bitstream *bit, int bits)
-{
-	unsigned long res = 0;
-	while (bits)
-	{
-		unsigned int d = bits;
-		if (!bit->avail)
-		{
-			bit->last = *bit->data++;
-			bit->avail = 8;
-		}
-		if (d > bit->avail)
-			d=bit->avail;
-		res<<=d;
-		res|=(bit->last>>(bit->avail-d))&~(-1<<d);
-		bit->avail -= d;
-		bits -= d;
-	}
-	return res;
-}
-
-void bitstream_put(struct bitstream *bit, unsigned long val, int bits)
-{
-	while (bits)
-	{
-		bit->last |= ((val & (1 << (bits-1))) ? 1 : 0) << (7 - bit->avail);
-		if (++bit->avail == 8)
-		{
-			*bit->data = bit->last;
-			++bit->data;
-			bit->last = 0;
-			bit->avail = 0;
-		}
-		--bits;
-	}
-}
-#endif
 
 GST_DEBUG_CATEGORY_STATIC (dvbvideosink_debug);
 #define GST_CAT_DEFAULT dvbvideosink_debug
@@ -346,11 +286,6 @@ static void gst_dvbvideosink_init(GstDVBVideoSink *self)
 	self->codec_data = NULL;
 	self->codec_type = CT_H264;
 	self->stream_type = STREAMTYPE_UNKNOWN;
-#ifdef PACK_UNPACKED_XVID_DIVX5_BITSTREAM
-	self->must_pack_bitstream = FALSE;
-	self->num_non_keyframes = 0;
-	self->prev_frame = NULL;
-#endif
 #if GST_VERSION_MAJOR >= 1
 	self->use_dts = FALSE;
 #endif
@@ -788,88 +723,6 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 	}
 #endif
 
-#ifdef PACK_UNPACKED_XVID_DIVX5_BITSTREAM
-	gboolean commit_prev_frame_data = FALSE, cache_prev_frame = FALSE;
-#endif
-
-#ifdef PACK_UNPACKED_XVID_DIVX5_BITSTREAM
-	if (self->must_pack_bitstream)
-	{
-		cache_prev_frame = TRUE;
-		unsigned int pos = 0;
-		while (pos < data_len)
-		{
-			if (memcmp(&data[pos], "\x00\x00\x01", 3))
-			{
-				pos++;
-				continue;
-			}
-			pos += 3;
-			if ((data[pos++] & 0xF0) == 0x20)
-			{ // we need time_inc_res
-				gboolean low_delay=FALSE;
-				unsigned int ver_id = 1, shape=0, time_inc_res=0, tmp=0;
-				struct bitstream bit;
-				bitstream_init(&bit, data+pos, 0);
-				bitstream_get(&bit, 9);
-				if (bitstream_get(&bit, 1))
-				{
-					ver_id = bitstream_get(&bit, 4); // ver_id
-					bitstream_get(&bit, 3);
-				}
-				if ((tmp = bitstream_get(&bit, 4)) == 15)
-				{ // Custom Aspect Ration
-					bitstream_get(&bit, 8); // skip AR width
-					bitstream_get(&bit, 8); // skip AR height
-				}
-				if (bitstream_get(&bit, 1))
-				{
-					bitstream_get(&bit, 2);
-					low_delay = bitstream_get(&bit, 1) ? TRUE : FALSE;
-					if (bitstream_get(&bit, 1))
-					{
-						bitstream_get(&bit, 32);
-						bitstream_get(&bit, 32);
-						bitstream_get(&bit, 15);
-					}
-				}
-				shape = bitstream_get(&bit, 2);
-				if (ver_id != 1 && shape == 3 /* Grayscale */) bitstream_get(&bit, 4);
-				bitstream_get(&bit, 1);
-				time_inc_res = bitstream_get(&bit, 16);
-				self->time_inc_bits = 0;
-				while (time_inc_res)
-				{ // count bits
-					++self->time_inc_bits;
-					time_inc_res >>= 1;
-				}
-			}
-		}
-	}
-
-	if (self->must_pack_bitstream)
-	{
-		int tmp1, tmp2;
-		unsigned char c1, c2;
-		unsigned int pos = 0;
-		while (pos < data_len)
-		{
-			if (memcmp(&data[pos], "\x00\x00\x01\xb2", 4))
-			{
-				pos++;
-				continue;
-			}
-			pos += 4;
-			if (data_len - pos < 13) break;
-			if (sscanf((char*)data+pos, "DivX%d%c%d%cp", &tmp1, &c1, &tmp2, &c2) == 4 && (c1 == 'b' || c1 == 'B') && (c2 == 'p' || c2 == 'P')) 
-			{
-				GST_INFO_OBJECT (self, "%s seen... already packed!", (char*)data+pos);
-				self->must_pack_bitstream = FALSE;
-				break;
-			}
-		}
-	}
-#endif
 	pes_header[0] = 0;
 	pes_header[1] = 0;
 	pes_header[2] = 1;
@@ -1017,122 +870,7 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 		}
 	}
 
-#ifdef PACK_UNPACKED_XVID_DIVX5_BITSTREAM
-	if (self->must_pack_bitstream)
-	{
-		unsigned int pos = 0;
-		gboolean i_frame = FALSE;
-		while (pos < data_len)
-		{
-			if (memcmp(&data[pos], "\x00\x00\x01\xb6", 4))
-			{
-				pos++;
-				continue;
-			}
-			pos += 4;
-			switch ((data[pos] & 0xC0) >> 6)
-			{
-				case 0: // I-Frame
-					cache_prev_frame = FALSE;
-					i_frame = TRUE;
-				case 1: // P-Frame
-					if (self->prev_frame != buffer)
-					{
-						struct bitstream bit;
-						gboolean store_frame=FALSE;
-						if (self->prev_frame)
-						{
-							if (!self->num_non_keyframes)
-							{
-								ret = gst_dvbvideosink_render(sink, self->prev_frame);
-								gst_buffer_unref(self->prev_frame);
-								self->prev_frame = NULL;
-								if (ret != GST_FLOW_OK)
-									goto error;
-								store_frame = TRUE;
-							}
-							else
-							{
-								pes_header[pes_header_len++] = 0;
-								pes_header[pes_header_len++] = 0;
-								pes_header[pes_header_len++] = 1;
-								pes_header[pes_header_len++] = 0xB6;
-								bitstream_init(&bit, pes_header+pes_header_len, 1);
-								bitstream_put(&bit, 1, 2);
-								bitstream_put(&bit, 0, 1);
-								bitstream_put(&bit, 1, 1);
-								bitstream_put(&bit, self->time_inc, self->time_inc_bits);
-								bitstream_put(&bit, 1, 1);
-								bitstream_put(&bit, 0, 1);
-								bitstream_put(&bit, 0x7F >> bit.avail, 8 - bit.avail);
-								data_len = 0;
-								pes_header_len += bit.data - (pes_header+pes_header_len);
-								cache_prev_frame = TRUE;
-							}
-						}
-						else if (!i_frame)
-						{
-							store_frame = TRUE;
-						}
-
-						self->num_non_keyframes=0;
-
-						// extract time_inc
-						bitstream_init(&bit, data+pos, 0);
-						bitstream_get(&bit, 2); // skip coding_type
-						while (bitstream_get(&bit, 1));
-						bitstream_get(&bit, 1);
-						self->time_inc = bitstream_get(&bit, self->time_inc_bits);
-
-						if (store_frame)
-						{
-							self->prev_frame = buffer;
-							gst_buffer_ref(buffer);
-							goto ok;
-						}
-					}
-					else
-					{
-						cache_prev_frame = FALSE;
-					}
-					break;
-				case 3: // S-Frame
-				case 2: // B-Frame
-					if (++self->num_non_keyframes == 1 && self->prev_frame)
-					{
-						commit_prev_frame_data = TRUE;
-					}
-					break;
-				case 4: // N-Frame
-				default:
-					g_warning("unhandled divx5/xvid frame type %d\n", (data[pos] & 0xC0) >> 6);
-					break;
-			}
-		}
-	}
-#endif
-
 	payload_len = data_len + pes_header_len - 6;
-
-#ifdef PACK_UNPACKED_XVID_DIVX5_BITSTREAM
-	if (self->prev_frame && self->prev_frame != buffer)
-	{
-#if GST_VERSION_MAJOR < 1
-		pes_set_pts(GST_BUFFER_TIMESTAMP(self->prev_frame), pes_header);
-#else
-		pes_set_pts(GST_BUFFER_PTS_IS_VALID(self->prev_frame) ? GST_BUFFER_PTS(self->prev_frame) : GST_BUFFER_DTS(self->prev_frame), pes_header);
-#endif
-	}
-
-	if (commit_prev_frame_data)
-	{
-#if GST_VERSION_MAJOR < 1
-		payload_len += GST_BUFFER_SIZE(self->prev_frame);
-#else
-		payload_len += gst_buffer_get_size(self->prev_frame);
-#endif
-	}
-#endif
 
 	if (self->codec_type == CT_MPEG2 || self->codec_type == CT_MPEG1)
 	{
@@ -1245,30 +983,6 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 
 	if (video_write(sink, self, self->pesheader_buffer, 0, pes_header_len) < 0) goto error;
 
-#ifdef PACK_UNPACKED_XVID_DIVX5_BITSTREAM
-	if (commit_prev_frame_data)
-	{
-		gsize prev_frame_size;
-#if GST_VERSION_MAJOR < 1
-		prev_frame_size = GST_BUFFER_SIZE(self->prev_frame);
-#else
-		prev_frame_size = gst_buffer_get_size(self->prev_frame);
-#endif
-		if (video_write(sink, self, self->prev_frame, 0, prev_frame_size) < 0) goto error;
-	}
-
-	if (self->prev_frame && self->prev_frame != buffer)
-	{
-		gst_buffer_unref(self->prev_frame);
-		self->prev_frame = NULL;
-	}
-
-	if (cache_prev_frame)
-	{
-		gst_buffer_ref(buffer);
-		self->prev_frame = buffer;
-	}
-#endif
 	if (video_write(sink, self, buffer, data - original_data, (data - original_data) + data_len) < 0) goto error;
 
 #if GST_VERSION_MAJOR < 1
@@ -1304,13 +1018,6 @@ error:
 	if (self->codec_data)
 	{
 		gst_buffer_unmap(self->codec_data, &codecdatamap);
-	}
-#endif
-#ifdef PACK_UNPACKED_XVID_DIVX5_BITSTREAM
-	if (self->prev_frame && self->prev_frame != buffer)
-	{
-		gst_buffer_unref(self->prev_frame);
-		self->prev_frame = NULL;
 	}
 #endif
 	if (tmpbuf)
@@ -1590,9 +1297,6 @@ static gboolean gst_dvbvideosink_set_caps(GstBaseSink *basesink, GstCaps *caps)
 	{
 		self->stream_type = STREAMTYPE_XVID;
 		self->codec_type = CT_MPEG4_PART2;
-#ifdef PACK_UNPACKED_XVID_DIVX5_BITSTREAM
-		self->must_pack_bitstream = TRUE;
-#endif
 		GST_INFO_OBJECT (self, "MIMETYPE video/x-xvid -> STREAMTYPE_XVID");
 	}
 	else if (!strcmp (mimetype, "video/x-divx") || !strcmp (mimetype, "video/x-msmpeg"))
@@ -1670,9 +1374,6 @@ static gboolean gst_dvbvideosink_set_caps(GstBaseSink *basesink, GstCaps *caps)
 #endif
 				self->stream_type = STREAMTYPE_DIVX5;
 				GST_INFO_OBJECT (self, "MIMETYPE video/x-divx vers. %d -> STREAMTYPE_DIVX5", divxversion);
-#ifdef PACK_UNPACKED_XVID_DIVX5_BITSTREAM
-				self->must_pack_bitstream = TRUE;
-#endif
 			break;
 			default:
 				GST_ELEMENT_ERROR (self, STREAM, FORMAT, (NULL), ("unhandled divx version %i", divxversion));
@@ -1899,14 +1600,6 @@ static gboolean gst_dvbvideosink_stop(GstBaseSink *basesink)
 		gst_buffer_unref(self->pesheader_buffer);
 		self->pesheader_buffer = NULL;
 	}
-
-#ifdef PACK_UNPACKED_XVID_DIVX5_BITSTREAM
-	if (self->prev_frame)
-	{
-		gst_buffer_unref(self->prev_frame);
-		self->prev_frame = NULL;
-	}
-#endif
 
 	while (self->queue)
 	{

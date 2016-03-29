@@ -100,13 +100,6 @@ struct _GstDVBVideoSink
 	gboolean use_dts;
 #endif
 
-#ifdef PACK_UNPACKED_XVID_DIVX5_BITSTREAM
-	/* data needed to pack bitstream (divx5 / xvid) */
-	gint num_non_keyframes, time_inc_bits, time_inc;
-	gboolean must_pack_bitstream;
-	GstBuffer *prev_frame;
-#endif
-
 	char saved_fallback_framerate[16];
 
 	gboolean wait_for_keyframe;
