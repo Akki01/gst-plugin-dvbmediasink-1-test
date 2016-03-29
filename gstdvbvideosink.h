@@ -96,9 +96,7 @@ struct _GstDVBVideoSink
 	GstBuffer *codec_data;
 	t_codec_type codec_type;
 	t_stream_type stream_type;
-#if GST_VERSION_MAJOR >= 1
 	gboolean use_dts;
-#endif
 
 	char saved_fallback_framerate[16];
 
