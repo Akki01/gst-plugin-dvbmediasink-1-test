@@ -246,7 +246,11 @@ GST_STATIC_PAD_TEMPLATE (
 		VIDEO_CAPS "; "
 #endif
 #ifdef HAVE_H264
-	"video/x-h264; "
+	"video/x-h264, "
+		VIDEO_CAPS "; "
+	"video/x-h264, "
+		"parsed = (boolean) true, "
+		"alignment = (string) nal; "
 #endif
 #ifdef HAVE_H263
 	"video/x-h263, "
